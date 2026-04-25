@@ -5,7 +5,9 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": { "graphine": "./dist/index.js" },
+  "bin": {
+    "graphine": "./dist/index.js"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsup src/index.ts --format cjs,esm --clean --dts",
@@ -23,5 +25,16 @@
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^4.1.1",
+    "fast-glob": "^3.3.1",
+    "graphology": "^0.26.0",
+    "ignore": "^5.3.2",
+    "ora": "^9.4.0",
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-javascript": "^0.23.1",
+    "tree-sitter-typescript": "^0.23.2"
   }
 }

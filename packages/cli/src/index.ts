@@ -1,8 +1,5 @@
 #!/usr/bin/env node
-import fs from 'fs';
+import { program } from "./cli.js";
 
-const currentFolder = process.cwd();
-console.log("Scanning files in:", currentFolder);
-
-const files = fs.readdirSync(currentFolder);
-console.log("Found files:", files);
+// Parse terminal arguments and execute the corresponding command
+program.parse(process.argv);
