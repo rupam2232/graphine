@@ -18,9 +18,14 @@ export type ConfidenceType = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
 export interface NodeData {
   type: NodeType;
   name: string;
+  unresolved?: boolean;
+  reason?: string;
   metadata?: Record<string, unknown> & {
     startLine?: number;
     endLine?: number;
+    callerFile?: string;
+    callerLine?: number;
+    message?: string;
   };
 }
 

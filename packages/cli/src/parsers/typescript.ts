@@ -306,14 +306,26 @@ export function parseTypeScript(
   const isTs = filePath.endsWith(".ts") || filePath.endsWith(".tsx");
   const isTsx = filePath.endsWith(".tsx");
 
-  const language = isTs
-    ? isTsx
-      ? tsLanguage.tsx
-      : tsLanguage.typescript
-    : jsLanguage;
+  // Robust language selection for different tree-sitter-typescript/javascript versions
+  let language;
+  if (isTs) {
+    const tsObj = tsLanguage;
+    if (isTsx) {
+      language = tsObj.tsx || tsObj;
+    } else {
+      language = tsObj.typescript || tsObj;
+    }
+  } else {
+    language = jsLanguage;
+  }
 
   const parser = new Parser();
-  parser.setLanguage(language);
+  try {
+    parser.setLanguage(language);
+  } catch {
+    console.error(chalk.red(`\n❌ Failed to set language for ${filePath}. Check if tree-sitter bindings are correct.`));
+    return;
+  }
 
   let sourceCode: string;
   try {
@@ -356,15 +368,24 @@ export function parseTypeScript(
       arguments: (arguments (string) @require_source)
       (#eq? @req_fn "require")
     )
-    (class_declaration name: (_) @class_name)
-
-    ; Capture all named function definitions (declaration, method, or variable-assigned)
+    
+    ; Capture class names (abstract only in TS)
+    ${isTs ? "[(class_declaration) (abstract_class_declaration)] @class_decl" : "(class_declaration) @class_decl"}
+    
+    ; Capture all named function definitions
     [
       (function_declaration name: (_) @func_name)
       (method_definition name: (_) @method_name)
       (variable_declarator 
         name: (identifier) @var_func_name 
         value: [(arrow_function) (function_expression)]
+      )
+      ; Common pattern: export const name = ...
+      (lexical_declaration
+        (variable_declarator
+          name: (identifier) @lex_func_name
+          value: [(arrow_function) (function_expression)]
+        )
       )
     ]
 
@@ -463,26 +484,34 @@ export function parseTypeScript(
             confidence: "EXTRACTED",
           });
         }
-      } else if (name === "class_name") {
-        const classId = `${filePath}::class::${node.text}`;
+      } else if (name === "class_decl" || name === "class_name") {
+        // If we captured the whole decl, find the name child
+        const nameNode = name === "class_decl" 
+          ? node.childForFieldName("name") 
+          : node;
+        
+        if (!nameNode) continue;
+        const className = nameNode.text;
+        const classId = `${filePath}::class::${className}`;
+
         if (!graph.hasNode(classId)) {
           let doc = "";
-          // node is the identifier; parent is the class_declaration
-          const declNode = node.parent;
+          // If we captured the decl, use it; otherwise use node.parent
+          const declNode = name === "class_decl" ? node : node.parent;
           if (declNode?.previousSibling?.type === "comment") {
             doc = declNode.previousSibling.text;
           }
           graph.addNode(classId, {
             type: "class",
-            name: node.text,
+            name: className,
             metadata: {
               doc,
               startLine: declNode
                 ? declNode.startPosition.row + 1
-                : node.startPosition.row + 1,
+                : nameNode.startPosition.row + 1,
               endLine: declNode
                 ? declNode.endPosition.row + 1
-                : node.endPosition.row + 1,
+                : nameNode.endPosition.row + 1,
             },
           });
           graph.addEdge(filePath, classId, {
@@ -493,19 +522,27 @@ export function parseTypeScript(
       } else if (
         name === "func_name" ||
         name === "method_name" ||
-        name === "var_func_name"
+        name === "var_func_name" ||
+        name === "lex_func_name"
       ) {
-        const funcId = `${filePath}::function::${node.text}`;
+        const funcName = node.text;
+        const funcId = `${filePath}::function::${funcName}`;
         if (!graph.hasNode(funcId)) {
           let doc = "";
-          const declNode =
-            name === "var_func_name" ? node.parent?.parent : node.parent;
+          let declNode: Parser.SyntaxNode | null = node.parent;
+          
+          if (name === "var_func_name") {
+            declNode = node.parent?.parent || node.parent;
+          } else if (name === "lex_func_name") {
+            declNode = node.parent?.parent?.parent || node.parent;
+          }
+
           if (declNode?.previousSibling?.type === "comment") {
             doc = declNode.previousSibling.text;
           }
           graph.addNode(funcId, {
             type: "function",
-            name: node.text,
+            name: funcName,
             metadata: {
               doc,
               startLine: declNode

@@ -2,10 +2,13 @@ import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
 import path from "path";
+import { availableParallelism } from "os";
+import { fileURLToPath } from "url";
+import { Worker } from "worker_threads";
 import { scanDirectory } from "./core/scanner.js";
 import { createKnowledgeGraph, resolveCallGraph } from "./core/graph.js";
-import { parseFile } from "./parsers/index.js";
 import { enrichWithGit } from "./core/git.js";
+import { WorkerMessage } from "./core/types.js";
 import {
   exportGraphJson,
   exportReportMarkdown,
@@ -34,6 +37,8 @@ program
       spinner: "dots",
     }).start();
 
+    const startTime = performance.now();
+
     try {
       // Phase 2: Invoke the File Walker
       const files = await scanDirectory(targetDir);
@@ -56,10 +61,71 @@ program
       }
 
       // Phase 4: AST Parsing
-      spinner.text = chalk.gray("Parsing AST for codebase relationships...");
-      for (const file of files) {
-        parseFile(file, graph);
-      }
+      // Optimization: Using Worker Threads to utilize all CPU cores and prevent main-thread freeze.
+      spinner.text = chalk.gray(`Parsing AST for ${files.length} files...`);
+
+      const numWorkers = Math.min(availableParallelism(), files.length);
+      const workerPath = path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "core",
+        "worker.js",
+      );
+
+      let parsedCount = 0;
+      const workers = Array.from({ length: numWorkers }, () => new Worker(workerPath));
+      const queue = [...files];
+
+      await Promise.all(
+        workers.map(async (worker) => {
+          while (queue.length > 0) {
+            const file = queue.shift();
+            if (!file) break;
+
+            await new Promise<void>((resolve) => {
+              const onMessage = (msg: WorkerMessage) => {
+                if (msg.error) {
+                  console.error(chalk.yellow(`\n⚠️ Worker error for ${file}: ${msg.error}`));
+                } else {
+                  msg.nodes?.forEach((n) => {
+                    if (!graph.hasNode(n.id)) {
+                      graph.addNode(n.id, n.attr);
+                    } else if (n.attr.type !== "file") {
+                      // Update attributes if it's not a file (it might have been a ghost node)
+                      graph.mergeNodeAttributes(n.id, n.attr);
+                    }
+                  });
+                  msg.edges?.forEach((e) => {
+                    if (!graph.hasEdge(e.source, e.target)) {
+                      graph.addEdge(e.source, e.target, e.attr);
+                    }
+                  });
+                }
+                parsedCount++;
+                spinner.text = chalk.gray(
+                  `Parsing AST: ${parsedCount}/${files.length} files...`,
+                );
+                worker.off("message", onMessage);
+                worker.off("error", onError);
+                resolve();
+              };
+
+              const onError = (err: Error) => {
+                console.error(chalk.red(`Worker error on ${file}: ${err.message}`));
+                parsedCount++;
+                worker.off("message", onMessage);
+                worker.off("error", onError);
+                resolve();
+              };
+
+              worker.on("message", onMessage);
+              worker.on("error", onError);
+              worker.postMessage({ filePath: file });
+            });
+          }
+          // Terminate worker when its part of the queue is empty
+          await worker.terminate();
+        }),
+      );
 
       // Phase 4.5: Call Graph Resolution
       // Merges unresolved_fn ghost nodes into real defined functions,
@@ -80,15 +146,20 @@ program
       exportReportMarkdown(graph, outDir);
       exportGraphHtml(graph, outDir);
 
+      const endTime = performance.now();
+      const durationSeconds = ((endTime - startTime) / 1000).toFixed(1);
+
       spinner.succeed(
         chalk.green(
-          `Successfully scanned and parsed ${chalk.bold(files.length)} target files.`,
+          `Successfully scanned and parsed ${files.length} target files.`,
         ),
       );
 
-      console.log(chalk.gray(`\nGraph Stats:`));
+      console.log();
+      console.log(chalk.bold("Graph Stats:"));
       console.log(chalk.dim(`  - Nodes: ${graph.order}`));
       console.log(chalk.dim(`  - Edges: ${graph.size}`));
+      console.log(chalk.dim(`  - Time:  ${durationSeconds}s`));
 
       console.log(); // Blank line for padding
     } catch (error) {
