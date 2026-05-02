@@ -84,7 +84,7 @@ program
             await new Promise<void>((resolve) => {
               const onMessage = (msg: WorkerMessage) => {
                 if (msg.error) {
-                  console.error(chalk.yellow(`\n⚠️ Worker error for ${file}: ${msg.error}`));
+                  console.error(chalk.yellow(`\n\u26A0\u3000Worker error for ${file}: ${msg.error}`));
                 } else {
                   msg.nodes?.forEach((n) => {
                     if (!graph.hasNode(n.id)) {

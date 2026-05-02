@@ -3,20 +3,11 @@ import path from "path";
 import fs from "fs";
 import type { MultiDirectedGraph } from "graphology";
 import type { NodeData, EdgeData } from "./graph.js";
+import chalk from "chalk";
 
-/**
- * Maximum number of recent commits to process.
- * Keeps the CLI fast even on repos with thousands of commits.
- */
 const COMMIT_LIMIT = 100;
-
-/** Versioned cache schema — bump when structure changes to force invalidation. */
 const CACHE_VERSION = "1";
 
-/**
- * Files to exclude from git enrichment. These are auto-generated or dependency
- * files whose commit history carries no architectural signal for an LLM.
- */
 const GIT_ENRICH_SKIP = new Set([
   "package-lock.json",
   "yarn.lock",
@@ -39,10 +30,16 @@ interface GitCacheBlameEntry {
   lineToCommit: Record<string, string>;
 }
 
+interface CommitMetadata {
+  message: string;
+  author: string;
+  date: string;
+}
+
 interface GitCache {
   version: string;
   head: string;
-  commitMessages: Record<string, string>;
+  commits: Record<string, CommitMetadata>;
   fileCommits: Record<string, string[]>;
   blame: Record<string, GitCacheBlameEntry>;
 }
@@ -79,6 +76,13 @@ export async function enrichWithGit(
     const isRepo = await git.checkIsRepo();
     if (!isRepo) return;
 
+    // Detect shallow clones (common in GitHub Actions / CI).
+    const isShallow = (await git.raw(["rev-parse", "--is-shallow-repository"])).trim() === "true";
+    if (isShallow) {
+      console.warn(chalk.yellow("\n\u26A0\u3000Shallow Git repository detected. Skipping Git enrichment to save time."));
+      return;
+    }
+
     repoRoot = (await git.raw(["rev-parse", "--show-toplevel"])).trim();
     currentHead = (await git.raw(["rev-parse", "HEAD"])).trim();
   } catch {
@@ -92,27 +96,39 @@ export async function enrichWithGit(
   const cache: GitCache = loadCache(cacheFile) ?? {
     version: CACHE_VERSION,
     head: "",
-    commitMessages: {},
+    commits: {},
     fileCommits: {},
     blame: {},
   };
 
-  async function getCommitMessage(hash: string): Promise<string> {
-    if (cache.commitMessages[hash]) return cache.commitMessages[hash]!;
-    const msg = await git.raw(["show", "-s", "--format=%B", hash]);
-    const trimmed = msg.trim();
-    cache.commitMessages[hash] = trimmed;
-    return trimmed;
+  async function getCommitMetadata(hash: string): Promise<CommitMetadata> {
+    if (cache.commits[hash]) return cache.commits[hash]!;
+    // Format: AuthorName===GRAPHINE===AuthorISODate===GRAPHINE===MessageBody
+    const rawOut = await git.raw(["show", "-s", "--format=%an===GRAPHINE===%aI===GRAPHINE===%B", hash]);
+    const parts = rawOut.split("===GRAPHINE===");
+    
+    const meta: CommitMetadata = {
+      author: parts[0]?.trim() || "Unknown",
+      date: parts[1]?.trim() || new Date().toISOString(),
+      message: parts.slice(2).join("===GRAPHINE===").trim() || "",
+    };
+    
+    cache.commits[hash] = meta;
+    return meta;
   }
 
   async function ensureCommitNode(hash: string): Promise<string> {
     const intentNodeId = `commit::${hash}`;
     if (!graph.hasNode(intentNodeId)) {
-      const message = await getCommitMessage(hash);
+      const meta = await getCommitMetadata(hash);
       graph.addNode(intentNodeId, {
         type: "intent",
         name: `Commit ${hash.substring(0, 7)}`,
-        metadata: { message },
+        metadata: { 
+          message: meta.message,
+          author: meta.author,
+          date: meta.date
+        },
       });
     }
     return intentNodeId;
@@ -176,7 +192,7 @@ export async function enrichWithGit(
   const funcClassNodes = graph.nodes().filter((id) => {
     const data = graph.getNodeAttributes(id);
     return (
-      (data.type === "function" || data.type === "class") &&
+      ["function", "class", "type", "interface", "enum"].includes(data.type) &&
       !data.metadata?.external
     );
   });
@@ -211,12 +227,21 @@ export async function enrichWithGit(
               ]),
             );
           } else {
+            const targetLines = new Set<number>();
+            for (const nodeId of nodeIds) {
+              const startLine = graph.getNodeAttributes(nodeId).metadata?.startLine as number | undefined;
+              if (startLine) targetLines.add(startLine);
+            }
+
             const blameOut = await git.raw(["blame", "--line-porcelain", filePath]);
             lineToCommit = new Map<number, string>();
             for (const line of blameOut.split("\n")) {
               if (line.match(/^[0-9a-f]{40} /)) {
                 const parts = line.split(" ");
-                lineToCommit.set(parseInt(parts[2]!, 10), parts[0]!);
+                const lineNum = parseInt(parts[2]!, 10);
+                if (targetLines.has(lineNum)) {
+                  lineToCommit.set(lineNum, parts[0]!);
+                }
               }
             }
             cache.blame[normalizedPath] = {
