@@ -55,6 +55,8 @@ program
           graph.addNode(file, {
             type: "file",
             name: path.basename(file),
+            file,
+            startLine: 0,
             metadata: {
               extension: path.extname(file),
             },
@@ -201,6 +203,7 @@ program
   .option("-f, --force", "Force overwrite existing rules", false)
   .action(async (options) => {
     const targetDir = process.cwd();
+
     const spinner = ora({
       text: chalk.gray(`Installing Graphine rules for ${options.platform}...`),
       color: "blue",
@@ -224,9 +227,38 @@ program
   });
 
 program
+  .command("query <symbol>")
+  .description("Query the knowledge graph for a specific symbol's relationships")
+  .option("-i, --incoming", "Show incoming edges (who uses this?)", true)
+  .option("-o, --outgoing", "Show outgoing edges (what does this use?)", true)
+  .option("-d, --depth <number>", "Traversal depth", "1")
+  .action(async (symbol, options) => {
+    const spinner = ora({
+      text: chalk.gray(`Querying relationships for: ${symbol}...`),
+      color: "blue",
+      spinner: "dots",
+    }).start();
+    try {
+      const { queryGraph } = await import("./core/query.js");
+      const result = await queryGraph(process.cwd(), symbol, {
+        incoming: !!options.incoming,
+        outgoing: !!options.outgoing,
+        depth: parseInt(options.depth),
+      });
+      spinner.stop();
+      console.log(JSON.stringify(result, null, 2));
+      console.log();
+    } catch (error) {
+      spinner.fail(chalk.red(`Query failed: ${error instanceof Error ? error.message : String(error)}`));
+      process.exit(1);
+    }
+  });
+
+program
   .command("uninstall")
   .description("Remove Graphine context rules from the project")
-  .action(async () => {
+  .option("-g, --global", "Also remove global skills for all supported platforms", false)
+  .action(async (options) => {
     const targetDir = process.cwd();
     const spinner = ora({
       text: chalk.gray("Removing Graphine intelligence bridge..."),
@@ -235,7 +267,7 @@ program
     }).start();
 
     try {
-      const results = await uninstallGraphine(targetDir);
+      const results = await uninstallGraphine(targetDir, { global: !!options.global });
       if (results.length === 0) {
         spinner.info(chalk.yellow("No Graphine rules found to remove."));
       } else {

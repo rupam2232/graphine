@@ -15,6 +15,8 @@ export function parseMarkdown(
     graph.addNode(filePath, {
       type: 'file',
       name: path.basename(filePath),
+      file: filePath,
+      startLine: 0,
       metadata: {
         extension: '.md',
         wordCount
@@ -55,6 +57,8 @@ export function parseMarkdown(
          graph.addNode(resolvedPath, {
            type: 'file',
            name: path.basename(resolvedPath),
+           file: resolvedPath,
+           startLine: 0,
            metadata: { extension: path.extname(resolvedPath) }
          });
        }

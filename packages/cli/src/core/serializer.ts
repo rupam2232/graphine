@@ -23,6 +23,8 @@ export function exportGraphJson(
       id: nodeId,
       type: data.type,
       name: data.name,
+      file: data.file,
+      startLine: data.startLine,
       ...data.metadata,
     };
   });
@@ -269,6 +271,7 @@ export function exportGraphHtml(
       node_type: data.type,
       source_file: sourceFile,
       degree: degree,
+      startLine: data.startLine,
       ...data.metadata,
     };
   });
@@ -457,7 +460,7 @@ export function exportGraphHtml(
 
     if (nodeData.unresolved) {
       html += \`<div class="field"><b>Status</b> <span style="color:#EDC948">Unresolved</span></div>\`;
-      if (nodeData.reason) html += \`<div class="field"><b>Reason</b> \${nodeData.reason}</div>\`;
+      if (nodeData.doc) html += \`<div class="field"><b>Reason</b> \${nodeData.doc}</div>\`;
     }
 
     infoContent.innerHTML = html;

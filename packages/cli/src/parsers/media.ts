@@ -13,6 +13,8 @@ export function parseMedia(
     graph.addNode(filePath, {
       type: 'media',
       name: path.basename(filePath),
+      file: filePath,
+      startLine: 0,
       metadata: {
         extension: path.extname(filePath),
         sizeBytes: stats.size,

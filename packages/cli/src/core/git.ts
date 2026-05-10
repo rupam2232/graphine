@@ -153,7 +153,7 @@ export async function enrichWithGit(
             }
 
             for (const nodeId of nodeIds) {
-              let startLine = graph.getNodeAttributes(nodeId).metadata?.startLine as number | undefined;
+              let startLine = graph.getNodeAttributes(nodeId).startLine as number | undefined;
               let endLine = graph.getNodeAttributes(nodeId).metadata?.endLine as number | undefined;
               
               if (!startLine) {
@@ -243,6 +243,8 @@ export async function enrichWithGit(
         graph.addNode(intentNodeId, {
           type: "intent",
           name: `Commit ${hash.substring(0, 7)}`,
+          file: "", // Intent nodes are global to the commit
+          startLine: 0,
           metadata: { 
             message: meta.message,
             author: meta.author,

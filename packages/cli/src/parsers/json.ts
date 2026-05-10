@@ -28,6 +28,8 @@ export function parseJson(
     graph.addNode(filePath, {
       type: 'file',
       name: fileName,
+      file: filePath,
+      startLine: 0,
       metadata: {
         extension: '.json',
         keyCount
@@ -42,6 +44,8 @@ export function parseJson(
       graph.addNode(depNodeId, {
         type: 'file',
         name: dep,
+        file: filePath,
+        startLine: 0,
         metadata: { external: true, extension: '.json' },
       });
     }
